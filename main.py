@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.pyplot as plt
 import numpy as np
 import signal
 import sys
@@ -12,7 +13,7 @@ class ActuationForceApp:
         self.root.title("Actuation Force Curve Editor")
         self.root.geometry("600x450")
 
-        self.fig = Figure(figsize=(5, 4), dpi=100)
+        self.fig = Figure(figsize=(5, 4), dpi=100, facecolor='#F3BBAF')
         self.plot = self.fig.add_subplot(111)
         self.plot.set_title("Actuation Force Curve")
         self.plot.set_xlabel("Switch Travel (%)")
@@ -20,18 +21,30 @@ class ActuationForceApp:
         self.plot.set_xlim(0, 100)
         self.plot.set_ylim(0, 100)
 
-        self.control_points = np.array([[0, 0], [33, 33], [66, 66], [100, 100]])
+        self.deadzone_fill = None
+        self.area_fill = None
 
-        self.line, = self.plot.plot(self.control_points[:, 0], self.control_points[:, 1], "ro-")
+        self.control_points = np.array([[0, 1], [25, 33], [75, 66], [100, 99]])
+
+        self.line, = self.plot.plot(self.control_points[:, 0], self.control_points[:, 1], "#BBAFF3")
+        
+        self.plot.set_facecolor('#AFE7F3')
 
         self.draggable_points = []
         for point in self.control_points:
-            draggable_point, = self.plot.plot(point[0], point[1], "bo", markersize=15, picker=15)
+            draggable_point, = self.plot.plot(
+                point[0], point[1], "o",  # 'o' is the marker style for a circle
+                markersize=15,
+                picker=14,
+                markerfacecolor="#FF6347",  # Tomato red for visibility
+                markeredgewidth=2,
+                markeredgecolor="white"  # White edge to contrast with the line
+            )
             self.draggable_points.append(draggable_point)
 
         self.current_draggable_point = None
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root, )
         self.canvas_widget = self.canvas.get_tk_widget()
         self.canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
@@ -41,6 +54,7 @@ class ActuationForceApp:
         self.fig.canvas.mpl_connect('pick_event', self.on_pick)
         self.fig.canvas.mpl_connect('motion_notify_event', self.on_drag)
         self.fig.canvas.mpl_connect('button_release_event', self.on_release)
+        self.update_control_points_and_line()
 
     def on_pick(self, event):
         self.current_draggable_point = event.artist
@@ -67,12 +81,40 @@ class ActuationForceApp:
                 self.update_control_points_and_line()
 
     def update_control_points_and_line(self):
+        # Remove the previous deadzone and area fill
+        if self.deadzone_fill:
+            self.deadzone_fill.remove()
+        if self.area_fill:
+            self.area_fill.remove()
+
+        # Update the line connecting the points
+        self.line.set_data(self.control_points[:, 0], self.control_points[:, 1])
+
+        # Then, update the positions of all draggable points based on the control_points array
         for draggable_point, control_point in zip(self.draggable_points, self.control_points):
             draggable_point.set_data(control_point[0], control_point[1])
 
-        self.line.set_data(self.control_points[:, 0], self.control_points[:, 1])
+        # Create a continuous x array for filling, to ensure the fill is continuous
+        x_fill = np.linspace(self.control_points[0][0], self.control_points[-1][0], 500)
+        y_line = np.interp(x_fill, self.control_points[:, 0], self.control_points[:, 1])
 
+        # Fill the deadzone with checkered pattern, which is below the first control point's y-value
+        self.deadzone_fill = self.plot.fill_between(
+            x_fill, 0, self.control_points[0][1],
+            facecolor='#BBAFF3', hatch='//', edgecolor='#6A58BE', alpha=1
+        )
+
+        # Fill the area between the curve and the x-axis with yellow
+        # We use y_line to ensure that we are filling under the curve defined by the line
+        self.area_fill = self.plot.fill_between(
+            x_fill, self.control_points[0][1], y_line,
+            where=(y_line >= self.control_points[0][1]),
+            facecolor='pink', alpha=0.95
+        )
+
+        # Redraw the canvas to reflect the changes
         self.canvas.draw_idle()
+
         
     def enforce_y_constraints(self):
         for i in range(1, len(self.control_points) - 1):  # Skip first and last points for y-axis constraint enforcement
