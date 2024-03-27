@@ -6,18 +6,73 @@ import matplotlib.pyplot as plt
 import numpy as np
 import signal
 import sys
+import json
+import re
+import subprocess
+import threading
+import queue
+
+
+HID_LISTEN_PATH = "C:\\Users\\mpamu\\code\\hid_listen-master\\binaries\\hid_listen.exe"
+
 
 class ActuationForceApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Actuation Force Curve Editor")
-        self.root.geometry("600x450")
+        self.root.geometry("1200x800")
+        
+        self.update_queue = queue.Queue()
 
+
+        # Load keyboard layout from JSON file
+        with open('info.json', 'r') as file:
+            self.keyboard_layout = json.load(file)["layouts"]["LAYOUT"]["layout"]
+        
+        self.key_text_ids = {}  # Initialize a dictionary to store text item IDs
+
+
+        # Container frame for the whole app
+        self.container = tk.Frame(self.root)
+        self.container.pack(fill=tk.BOTH, expand=True)
+
+        # Frame for the keyboard layout
+        self.keyboard_frame = tk.Frame(self.container)
+        self.keyboard_frame.pack(side=tk.LEFT, fill=tk.Y, padx=20, pady=10)
+        self.keyboard_frame.pack_propagate(0)  # Don't shrink
+        self.keyboard_frame.config(width=1200, height=300)  # Or whatever size you want
+                # Define base unit sizes in pixels. These should be larger to properly represent key sizes.
+        self.unit_width = 50  # Width of one key unit, now an attribute of the class
+        self.unit_height = 50  # Height of one key unit, now an attribute of the class
+        self.spacing = 1
+        # Now proceed to call create_keyboard_layout
+        self.create_keyboard_layout()
+        
+        # Frame for the curve plot
+        self.curve_frame = tk.Frame(self.container)
+        self.curve_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.create_curve_plot()
+
+        self.check_queue()
+
+
+        
+    def check_queue(self):
+        try:
+            while not self.update_queue.empty():
+                row, column, text = self.update_queue.get_nowait()
+                self.update_key_text(row, column, text)
+        except queue.Empty:
+            pass
+        # Schedule check_queue to run after some delay (e.g., 100 ms)
+        self.root.after(100, self.check_queue)
+
+    def create_curve_plot(self):
         self.fig = Figure(figsize=(5, 4), dpi=100, facecolor='#F3BBAF')
         self.plot = self.fig.add_subplot(111)
         self.plot.set_title("Actuation Force Curve")
-        self.plot.set_xlabel("Switch Travel (%)")
-        self.plot.set_ylabel("Analog Output (%)")
+        self.plot.set_xlabel("Analog Output (%)")
+        self.plot.set_ylabel("Switch Travel (%)")
         self.plot.set_xlim(0, 100)
         self.plot.set_ylim(0, 100)
 
@@ -56,6 +111,52 @@ class ActuationForceApp:
         self.fig.canvas.mpl_connect('button_release_event', self.on_release)
         self.update_control_points_and_line()
 
+    def create_keyboard_layout(self):
+        self.keyboard_canvas = tk.Canvas(self.keyboard_frame, bg="white")
+        self.keyboard_canvas.pack(side="top", fill="both", expand=True)
+
+        # Assuming a fixed height for simplicity here
+        total_width = sum(key_info.get("w", 1) * self.unit_width for key_info in self.keyboard_layout) + (len(self.keyboard_layout) - 1) * self.spacing
+        self.keyboard_canvas.config(width=total_width, height=300) 
+        # Initialize the x positions for each row, assuming the first key starts at x position 0
+        x_positions = [5, 5, 5, 5, 5]  # Assuming there are 5 rows
+
+        for key_info in self.keyboard_layout:
+            label = key_info["label"]
+            row = key_info["matrix"][0]
+            column = key_info["matrix"][1]
+
+            # 'x' from JSON indicates the unit position from the left edge, accounting for the preceding keys
+            x_units = key_info.get("x", 0)  # Starting x position in key units
+            y_units = row  # The y position is simply determined by the row number
+
+            # Update the x position for the current key in this row
+            x_positions[row] = x_units * self.unit_width  # Convert x units to pixels for x position
+
+            # The x position in pixels should be where the last key in the row ended
+            x_position = x_positions[row]
+            y_position = y_units * self.unit_height  # Convert row number to pixels for y position
+
+            # Determine key width in pixels using the 'w' attribute from JSON
+            key_width = key_info.get("w", 1) * self.unit_width
+
+            # Draw the key rectangle
+            self.keyboard_canvas.create_rectangle(x_position, y_position, x_position + key_width, y_position + self.unit_height, fill="#f0f0f0", outline="black")
+
+            # Add text label to the rectangle
+            self.keyboard_canvas.create_text(x_position + (key_width / 2), y_position + (self.unit_height / 2), text=label)
+
+            text_id = self.keyboard_canvas.create_text(
+                x_position + (key_width / 2), 
+                y_position + (self.unit_height / 2), 
+                text=label
+            )
+            # Store the text_id in the dictionary using row and column as the key
+            self.key_text_ids[(row, column)] = text_id
+
+        # Set the canvas size to fit the entire keyboard layout
+        self.keyboard_canvas.config(scrollregion=self.keyboard_canvas.bbox("all"))
+    
     def on_pick(self, event):
         self.current_draggable_point = event.artist
 
@@ -82,39 +183,49 @@ class ActuationForceApp:
                 self.update_control_points_and_line()
 
     def update_control_points_and_line(self):
-        # Remove the previous deadzone and area fill
-        if self.deadzone_fill:
+        # Clear the previous fill_between if it exists
+        if self.deadzone_fill is not None:
             self.deadzone_fill.remove()
-        if self.area_fill:
+            self.deadzone_fill = None
+            
+        if self.area_fill is not None:
             self.area_fill.remove()
+            self.area_fill = None
 
         # Update the line connecting the points
         self.line.set_data(self.control_points[:, 0], self.control_points[:, 1])
 
-        # Then, update the positions of all draggable points based on the control_points array
+        # Update the positions of all draggable points based on the control_points array
         for draggable_point, control_point in zip(self.draggable_points, self.control_points):
-            draggable_point.set_data(control_point[0], control_point[1])
+            draggable_point.set_data([control_point[0]], [control_point[1]])
 
         # Create a continuous x array for filling, to ensure the fill is continuous
-        x_fill = np.linspace(self.control_points[0][0], self.control_points[-1][0], 500)
+        x_fill = np.linspace(0, 100, 500)
         y_line = np.interp(x_fill, self.control_points[:, 0], self.control_points[:, 1])
 
-        # Fill the deadzone with checkered pattern, which is below the first control point's y-value
+        # Apply new fills
         self.deadzone_fill = self.plot.fill_between(
             x_fill, 0, self.control_points[0][1],
             facecolor='#BBAFF3', hatch='//', edgecolor='#6A58BE', alpha=1
         )
 
-        # Fill the area between the curve and the x-axis with yellow
-        # We use y_line to ensure that we are filling under the curve defined by the line
         self.area_fill = self.plot.fill_between(
-            x_fill, self.control_points[0][1], y_line,
-            where=(y_line >= self.control_points[0][1]),
+            x_fill, y_line, 0,
             facecolor='pink', alpha=0.95
         )
 
         # Redraw the canvas to reflect the changes
         self.canvas.draw_idle()
+
+    def update_key_text(self, row, column, text):
+        # Find the text item by its row and column
+        text_item_id = self.key_text_ids.get((row, column))
+        if text_item_id:
+            # If found, update the text of the key on the GUI
+            self.keyboard_canvas.itemconfig(text_item_id, text=text)
+        else:
+            print(f"No text item found for key at row {row}, column {column}")
+
 
         
     def enforce_y_constraints(self):
@@ -137,6 +248,7 @@ class ActuationForceApp:
     
     def on_release(self, event):
         self.current_draggable_point = None
+        self.update_control_points_and_line()
 
     def print_curve_representation(self):
         print("C Representation:")
@@ -157,12 +269,61 @@ class ActuationForceApp:
         print("    else return x;")  # Handle the case where x is beyond the last control point
         print("}")
 
+def read_hid_listen_output(process, app):
+    try:
+        hid_pattern = re.compile(r"Sensor (\d+) \((\d+),(\d+)\):.*?Rescale: (\d+)")
+        
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break  # End of output
+            line = line.strip()
+            
+            # Use regular expression to parse the HID data line
+            matches = hid_pattern.finditer(line)
+            for match in matches:
+                sensor, column, row, rescale = match.groups()  # Corrected the order of groups
+                # Put the update command onto the queue
+                app.update_queue.put((int(row), int(column), rescale))
+
+    except Exception as e:
+        print(f"Exception in thread: {e}")
+
+def start_hid_listen(app):
+    print("Inside start_hid_listen function.")
+    # Start the hid_listen process
+    print("About to start the hid_listen subprocess.")
+    process = subprocess.Popen([HID_LISTEN_PATH], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1)
+    print("hid_listen subprocess started.")
+    
+    # Create a thread to read the output of hid_listen in real-time and pass the app instance to it
+    print("About to start the thread.")
+    thread = threading.Thread(target=read_hid_listen_output, args=(process, app))
+    thread.daemon = True
+    thread.start()
+    print("Thread started.")
+
+    # Wait for the process to end or for user input to terminate
+    try:
+        process.wait()
+    except KeyboardInterrupt:
+        print("Stopping hid_listen.")
+        process.kill()
+
 def sigint_handler(signum, frame):
     print("Caught SIGINT (Ctrl+C). Exiting gracefully...")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, sigint_handler)
 
-root = tk.Tk()
-app = ActuationForceApp(root)
-root.mainloop()
+# Main part of the script to run the app
+if __name__ == "__main__":
+    print("Creating Tkinter root.")
+    root = tk.Tk()
+    print("Creating the app.")
+    app = ActuationForceApp(root)
+    print("Starting hid_listen.")
+    start_hid_listen(app)
+    print("Running the Tkinter loop.")
+    root.mainloop()
+    print("Tkinter loop has ended.")
