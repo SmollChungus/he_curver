@@ -77,6 +77,7 @@ class ActuationForceApp:
                 
                 self.control_points[index] = [new_x, new_y]
                 self.enforce_y_constraints()
+                self.enforce_x_constraints()
 
                 self.update_control_points_and_line()
 
@@ -122,6 +123,17 @@ class ActuationForceApp:
                 self.control_points[i][1] = self.control_points[i - 1][1] + 1
             if i < len(self.control_points) - 1 and self.control_points[i][1] >= self.control_points[i + 1][1]:
                 self.control_points[i + 1][1] = self.control_points[i][1] + 1
+
+    def enforce_x_constraints(self):
+        for i in range(1, len(self.control_points) - 1):  # Skip first and last points for x-axis constraint enforcement
+            if self.control_points[i][0] <= self.control_points[i - 1][0]:
+                self.control_points[i][0] = self.control_points[i - 1][0] + 1
+            if i < len(self.control_points) - 1 and self.control_points[i][0] >= self.control_points[i + 1][0]:
+                if self.control_points[i+1][0] < 100:
+                    self.control_points[i + 1][0] = self.control_points[i][0] + 1
+                else:
+                    self.control_points[i+1][0] = 100
+
     
     def on_release(self, event):
         self.current_draggable_point = None
