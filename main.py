@@ -8,9 +8,7 @@ import signal
 import sys
 import json
 import re
-import subprocess
-import threading
-import queue
+
 
 
 HID_LISTEN_PATH = "C:\\Users\\mpamu\\code\\hid_listen-master\\binaries\\hid_listen.exe"
@@ -22,7 +20,6 @@ class ActuationForceApp:
         self.root.title("Actuation Force Curve Editor")
         self.root.geometry("1200x800")
         
-        self.update_queue = queue.Queue()
 
 
         # Load keyboard layout from JSON file
@@ -53,19 +50,11 @@ class ActuationForceApp:
         self.curve_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
         self.create_curve_plot()
 
-        self.check_queue()
+       # self.check_queue()
 
 
         
-    def check_queue(self):
-        try:
-            while not self.update_queue.empty():
-                row, column, text = self.update_queue.get_nowait()
-                self.update_key_text(row, column, text)
-        except queue.Empty:
-            pass
-        # Schedule check_queue to run after some delay (e.g., 100 ms)
-        self.root.after(100, self.check_queue)
+
 
     def create_curve_plot(self):
         self.fig = Figure(figsize=(5, 4), dpi=100, facecolor='#F3BBAF')
@@ -269,46 +258,56 @@ class ActuationForceApp:
         print("    else return x;")  # Handle the case where x is beyond the last control point
         print("}")
 
-def read_hid_listen_output(process, app):
-    try:
-        hid_pattern = re.compile(r"Sensor (\d+) \((\d+),(\d+)\):.*?Rescale: (\d+)")
-        
-        while True:
-            line = process.stdout.readline()
-            if not line:
-                break  # End of output
-            line = line.strip()
-            
-            # Use regular expression to parse the HID data line
-            matches = hid_pattern.finditer(line)
-            for match in matches:
-                sensor, column, row, rescale = match.groups()  # Corrected the order of groups
-                # Put the update command onto the queue
-                app.update_queue.put((int(row), int(column), rescale))
+#def read_hid_listen_output(process, app):
+#    print("Thread: Started reading HID listen output.")  # Debug statement
+####      # Add a counter for test updates
+   #     counter = 0
+   #     
+   #     while True:
+   #         # Test: Put a test message in the queue every 10 iterations
+   #         # Inside read_hid_listen_output
+   #         if counter % 10 == 0:
+   #             # Cycle through different rows and columns if necessary
+   #             test_row = (counter // 10) % 5  # Example: Cycle through rows 0-4
+   #             test_column = (counter // 10) % 5  # Example: Adjust as needed
+   #             print(f"Thread: Test update {counter} for row {test_row}, column {test_column}.")  # Debug statement
+   #             app.update_queue.put((test_row, test_column, f"Test {counter}"))
 
-    except Exception as e:
-        print(f"Exception in thread: {e}")
+    #$        counter += 1
 
-def start_hid_listen(app):
-    print("Inside start_hid_listen function.")
-    # Start the hid_listen process
-    print("About to start the hid_listen subprocess.")
-    process = subprocess.Popen([HID_LISTEN_PATH], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1)
-    print("hid_listen subprocess started.")
-    
-    # Create a thread to read the output of hid_listen in real-time and pass the app instance to it
-    print("About to start the thread.")
-    thread = threading.Thread(target=read_hid_listen_output, args=(process, app))
-    thread.daemon = True
-    thread.start()
-    print("Thread started.")
+        #    line = process.stdout.readline()
+        #    if not line:
+        #        print("Thread: No more lines to read.")  # Debug statement
+        #        break  # End of output
+
+         #   print(f"Thread: Read line: {line.strip()}")  # Debug statement
+
+          #  matches = hid_pattern.finditer(line)
+          #  for match in matches:
+          #      sensor, column, row, rescale = match.groups()
+          #      print(f"Thread: Match found. Row: {row}, Column: {column}, Rescale: {rescale}")  # Debug statement
+          #      app.update_queue.put((int(row), int(column), rescale))
+
+   # except Exception as e:
+   #     print(f"Thread: Exception caught: {e}")  # Improved exception handling
+
+#def start_hid_listen(app):
+#    print("Inside start_hid_listen function.")
+#    # Start the hid_listen process
+#    print("About to start the hid_listen subprocess.")
+##    print("hid_listen subprocess started.")
+ #   
+ #   # Create a thread to read the output of hid_listen in real-time and pass the app instance to it
+ ###  thread.daemon = True
+    #thread.start()
+    #print("Thread started.")
 
     # Wait for the process to end or for user input to terminate
-    try:
-        process.wait()
-    except KeyboardInterrupt:
-        print("Stopping hid_listen.")
-        process.kill()
+ #   try:
+ #       process.wait()
+ #   except KeyboardInterrupt:
+ #       print("Stopping hid_listen.")
+ #       process.kill()
 
 def sigint_handler(signum, frame):
     print("Caught SIGINT (Ctrl+C). Exiting gracefully...")
@@ -323,7 +322,7 @@ if __name__ == "__main__":
     print("Creating the app.")
     app = ActuationForceApp(root)
     print("Starting hid_listen.")
-    start_hid_listen(app)
+    #start_hid_listen(app)
     print("Running the Tkinter loop.")
     root.mainloop()
     print("Tkinter loop has ended.")
